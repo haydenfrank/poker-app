@@ -1,4 +1,4 @@
-// File: src/screens/PlayerScreen.tsx
+// src/screens/PlayerScreen.tsx (send broadcast after delete)
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../supabase";
@@ -27,14 +27,14 @@ export default function PlayerScreen({ roomId }: Props) {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("players")
         .select("id,name,seat,money,room_id,is_admin")
         .eq("id", playerId)
         .eq("room_id", roomId)
         .single();
       if (!cancelled) {
-        if (error || !data) {
+        if (!data) {
           clearPlayerId(roomId);
           navigate("/join", { replace: true });
         } else {
@@ -57,6 +57,16 @@ export default function PlayerScreen({ roomId }: Props) {
       .delete()
       .eq("id", playerId)
       .eq("room_id", roomId);
+    // Broadcast so the main table clears immediately even if DELETE payload lacks seat
+    const bc = supabase.channel(`room:${roomId}:bc`, {
+      config: { broadcast: { self: true } },
+    });
+    await bc.subscribe();
+    await bc.send({
+      type: "broadcast",
+      event: "player_left",
+      payload: { id: playerId },
+    });
     clearPlayerId(roomId);
     setLeaving(false);
     navigate("/join", { replace: true });

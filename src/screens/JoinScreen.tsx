@@ -1,6 +1,6 @@
-// File: src/screens/JoinScreen.tsx
+// File: src/screens/JoinScreen.tsx (preselect seat from ?seat=)
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../supabase";
 import { getPlayerId, savePlayerId, clearPlayerId } from "../storage";
 
@@ -10,12 +10,22 @@ interface Props {
 
 export default function JoinScreen({ roomId }: Props) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const initialSeatParam = searchParams.get("seat");
+  const initialSeat =
+    initialSeatParam !== null
+      ? (() => {
+          const n = Number(initialSeatParam);
+          return Number.isFinite(n) && n >= 0 && n < 10 ? n : null;
+        })()
+      : null;
+
   const [name, setName] = useState("");
   const [money, setMoney] = useState(1000);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [occupied, setOccupied] = useState<Set<number>>(new Set());
-  const [selectedSeat, setSelectedSeat] = useState<number | null>(null);
+  const [selectedSeat, setSelectedSeat] = useState<number | null>(initialSeat);
   const [isAdmin, setIsAdmin] = useState(false);
 
   const seatNumbers = useMemo(
@@ -42,7 +52,6 @@ export default function JoinScreen({ roomId }: Props) {
   // Load and watch seat occupancy
   useEffect(() => {
     let cancelled = false;
-
     async function loadSeats() {
       const { data, error } = await supabase
         .from("players")
@@ -52,9 +61,7 @@ export default function JoinScreen({ roomId }: Props) {
       const occ = new Set<number>(data!.map((r: any) => r.seat));
       if (!cancelled) setOccupied(occ);
     }
-
     loadSeats();
-
     const channel = supabase
       .channel(`room:${roomId}:seats`)
       .on(
@@ -68,12 +75,18 @@ export default function JoinScreen({ roomId }: Props) {
         () => loadSeats()
       )
       .subscribe();
-
     return () => {
       cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [roomId]);
+
+  // If the preselected seat becomes occupied, clear selection
+  useEffect(() => {
+    setSelectedSeat((prev) =>
+      prev != null && occupied.has(prev) ? null : prev
+    );
+  }, [occupied]);
 
   async function handleJoin(e: FormEvent) {
     e.preventDefault();
@@ -113,7 +126,6 @@ export default function JoinScreen({ roomId }: Props) {
     <div style={{ maxWidth: 520, width: "100%" }}>
       <h2>Join the Table</h2>
 
-      {/* Seat picker */}
       <div
         style={{
           display: "grid",

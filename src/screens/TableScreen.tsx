@@ -1,4 +1,4 @@
-// File: src/screens/TableScreen.tsx (update to fetch is_admin and pass through)
+// src/screens/TableScreen.tsx (add broadcast listener)
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import PokerTable from "../components/PokerTable";
@@ -18,7 +18,6 @@ const currency = new Intl.NumberFormat(undefined, {
   currency: "USD",
   maximumFractionDigits: 0,
 });
-
 interface Props {
   roomId: string;
 }
@@ -28,46 +27,87 @@ export default function TableScreen({ roomId }: Props) {
     Array.from({ length: 10 }, () => null)
   );
 
-  async function load() {
-    const { data, error } = await supabase
+  const toPlayer = (r: DBPlayer): Player => ({
+    id: r.id,
+    name: r.name,
+    money: r.money,
+    isAdmin: r.is_admin,
+  });
+
+  async function loadAll() {
+    const { data } = await supabase
       .from("players")
       .select("id,room_id,seat,name,money,is_admin")
       .eq("room_id", roomId);
-    if (error) return console.error(error);
-    const next: (Player | null)[] = Array.from({ length: 10 }, () => null);
-    data!.forEach((row: DBPlayer) => {
-      if (row.seat >= 0 && row.seat < 10) {
-        next[row.seat] = {
-          id: row.id,
-          name: row.name,
-          money: row.money,
-          isAdmin: row.is_admin,
-        };
-      }
+    const next = Array.from({ length: 10 }, () => null) as (Player | null)[];
+    data?.forEach((r: DBPlayer) => {
+      if (r.seat >= 0 && r.seat < 10) next[r.seat] = toPlayer(r);
     });
     setSeats(next);
   }
+
   useEffect(() => {
-    load();
-    const channel = supabase
-      .channel(`room:${roomId}`)
+    loadAll();
+
+    const changes = supabase
+      .channel(`room:${roomId}:players`)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "players",
-          filter: `room_id=eq.${roomId}`,
-        },
-        () => load()
+        { event: "*", schema: "public", table: "players" },
+        (payload: any) => {
+          const evt = payload.eventType as "INSERT" | "UPDATE" | "DELETE";
+          const newRow = payload.new as DBPlayer | null;
+          const oldRow = payload.old as DBPlayer | null;
+          const room = newRow?.room_id ?? oldRow?.room_id;
+          if (room !== roomId) return;
+
+          setSeats((prev) => {
+            const next = [...prev];
+            if (
+              evt === "INSERT" &&
+              newRow &&
+              newRow.seat >= 0 &&
+              newRow.seat < 10
+            )
+              next[newRow.seat] = toPlayer(newRow);
+            else if (evt === "UPDATE" && newRow) {
+              // clear old seat if moved
+              const oldSeat = prev.findIndex((p) => p?.id === newRow.id);
+              if (oldSeat !== -1 && oldSeat !== newRow.seat)
+                next[oldSeat] = null;
+              if (newRow.seat >= 0 && newRow.seat < 10)
+                next[newRow.seat] = toPlayer(newRow);
+            } else if (evt === "DELETE" && oldRow) {
+              const seat = prev.findIndex((p) => p?.id === oldRow.id);
+              if (seat !== -1) next[seat] = null;
+              else queueMicrotask(loadAll);
+            }
+            return next;
+          });
+        }
       )
       .subscribe();
+
+    const bc = supabase
+      .channel(`room:${roomId}:bc`, { config: { broadcast: { self: true } } })
+      .on("broadcast", { event: "player_left" }, ({ payload }: any) => {
+        const id = payload?.id as string | undefined;
+        if (!id) return;
+        setSeats((prev) => {
+          const next = [...prev];
+          const seat = prev.findIndex((p) => p?.id === id);
+          if (seat !== -1) next[seat] = null;
+          return next;
+        });
+      })
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(changes);
+      supabase.removeChannel(bc);
     };
   }, [roomId]);
 
   const formatMoney = useMemo(() => (n: number) => currency.format(n), []);
-
   return <PokerTable seats={seats} formatMoney={formatMoney} />;
 }
