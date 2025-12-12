@@ -1,4 +1,4 @@
-// File: src/screens/JoinScreen.tsx (uses roomId from prop, same as before)
+// File: src/screens/JoinScreen.tsx
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../supabase";
@@ -11,13 +11,15 @@ interface Props {
 export default function JoinScreen({ roomId }: Props) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
   const initialSeatParam = searchParams.get("seat");
-  const initialSeat = initialSeatParam
-    ? (() => {
-        const n = Number(initialSeatParam);
-        return Number.isFinite(n) && n >= 0 && n < 10 ? n : null;
-      })()
-    : null;
+  const initialSeat =
+    initialSeatParam !== null
+      ? (() => {
+          const n = Number(initialSeatParam);
+          return Number.isFinite(n) && n >= 0 && n < 10 ? n : null;
+        })()
+      : null;
 
   const [name, setName] = useState("");
   const [money, setMoney] = useState(1000);
@@ -32,6 +34,7 @@ export default function JoinScreen({ roomId }: Props) {
     []
   );
 
+  // Auto-resume if a saved player still exists
   useEffect(() => {
     const saved = getPlayerId(roomId);
     if (!saved) return;
@@ -48,31 +51,38 @@ export default function JoinScreen({ roomId }: Props) {
       });
   }, [roomId, navigate]);
 
+  // Load and watch seat occupancy
   useEffect(() => {
     let cancelled = false;
+
     async function loadSeats() {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("players")
         .select("seat")
         .eq("room_id", roomId);
-      const occ = new Set<number>(data?.map((r: any) => r.seat) ?? []);
+      if (error) return;
+      const occ = new Set<number>(data!.map((r: any) => r.seat));
       if (!cancelled) setOccupied(occ);
     }
+
     loadSeats();
+
     const channel = supabase
       .channel(`room:${roomId}:seats`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "players" },
-        loadSeats
+        () => loadSeats()
       )
       .subscribe();
+
     return () => {
       cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [roomId]);
 
+  // If the preselected seat becomes occupied, clear selection
   useEffect(() => {
     setSelectedSeat((prev) =>
       prev != null && occupied.has(prev) ? null : prev
@@ -82,11 +92,15 @@ export default function JoinScreen({ roomId }: Props) {
   async function handleJoin(e: FormEvent) {
     e.preventDefault();
     setStatus(null);
+
     if (!name.trim()) return setStatus("Please enter a name.");
     if (selectedSeat === null) return setStatus("Pick a seat.");
     if (occupied.has(selectedSeat))
       return setStatus("That seat was just taken. Pick another.");
+
     setLoading(true);
+
+    const startMoney = Math.max(0, Math.floor(money));
 
     const { data: inserted, error: insErr } = await supabase
       .from("players")
@@ -94,18 +108,19 @@ export default function JoinScreen({ roomId }: Props) {
         room_id: roomId,
         seat: selectedSeat,
         name: name.trim(),
-        money: Math.max(0, Math.floor(money)),
+        money: startMoney,
         is_admin: isAdmin,
       })
       .select()
       .single();
 
     if (insErr) {
-      setStatus(
-        (insErr as any).code === "23505"
-          ? "Seat already taken. Please choose another."
-          : "Join failed."
-      );
+      // Unique violation when is_admin true and one_admin_per_room index is active
+      if ((insErr as any).code === "23505") {
+        setStatus("This table already has an admin.");
+      } else {
+        setStatus("Join failed.");
+      }
       setLoading(false);
       return;
     }
@@ -118,6 +133,8 @@ export default function JoinScreen({ roomId }: Props) {
   return (
     <div style={{ maxWidth: 520, width: "100%" }}>
       <h2>Join the Table ({roomId})</h2>
+
+      {/* Seat picker */}
       <div
         style={{
           display: "grid",
@@ -148,17 +165,26 @@ export default function JoinScreen({ roomId }: Props) {
                 color: isSelected ? "#08110a" : "#e5e7eb",
                 fontWeight: isSelected ? 700 : 500,
               }}
+              title={isOccupied ? "Occupied" : "Available"}
             >
               Seat {s + 1}
             </button>
           );
         })}
       </div>
+
       <form onSubmit={handleJoin} style={{ display: "grid", gap: "0.75rem" }}>
         <input
           placeholder="Your name"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          style={{
+            padding: "0.6rem",
+            borderRadius: 8,
+            border: "1px solid #374151",
+            background: "#0b1220",
+            color: "white",
+          }}
         />
         <input
           type="number"
@@ -166,19 +192,45 @@ export default function JoinScreen({ roomId }: Props) {
           placeholder="Starting money"
           value={money}
           onChange={(e) => setMoney(Number(e.target.value))}
+          style={{
+            padding: "0.6rem",
+            borderRadius: 8,
+            border: "1px solid #374151",
+            background: "#0b1220",
+            color: "white",
+          }}
         />
-        <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            color: "#e5e7eb",
+          }}
+        >
           <input
             type="checkbox"
             checked={isAdmin}
             onChange={(e) => setIsAdmin(e.target.checked)}
-          />{" "}
+          />
           Join as admin
         </label>
-        <button type="submit" disabled={loading}>
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            padding: "0.6rem",
+            borderRadius: 8,
+            background: "#22c55e",
+            color: "#08110a",
+            fontWeight: 700,
+          }}
+        >
           {loading ? "Joining…" : "Join"}
         </button>
       </form>
+
+      {status && <p style={{ marginTop: 12 }}>{status}</p>}
     </div>
   );
 }

@@ -278,3 +278,33 @@ body {
   z-index: 3; /* sits below seat cards */
   pointer-events: none; /* never blocks seat clicks */
 }
+/* File: src/styles.css (add reusable badges) */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 800;
+}
+.badge.admin {
+  background: #fbbf24;
+  color: #111827;
+}
+.badge.dealer {
+  background: #9ca3af;
+  color: #111827;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 800;
+}
+.badge.admin {
+  background: #fbbf24;
+  color: #111827;
+}
+.badge.dealer {
+  background: #9ca3af;
+  color: #111827;
+}

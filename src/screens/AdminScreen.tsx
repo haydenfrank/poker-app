@@ -1,5 +1,5 @@
-// File: src/screens/AdminScreen.tsx (add "Make Dealer" per player; removes old room-based dealer UI)
-import { FormEvent, useEffect, useMemo, useState } from "react";
+// File: src/screens/AdminScreen.tsx
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabase";
 
@@ -7,6 +7,7 @@ interface Props {
   roomId: string;
   adminId: string;
 }
+
 type PlayerRow = {
   id: string;
   name: string;
@@ -14,6 +15,7 @@ type PlayerRow = {
   money: number;
   room_id: string;
   is_dealer: boolean;
+  is_admin: boolean;
 };
 
 export default function AdminScreen({ roomId, adminId }: Props) {
@@ -41,7 +43,7 @@ export default function AdminScreen({ roomId, adminId }: Props) {
   async function loadPlayers() {
     const { data, error } = await supabase
       .from("players")
-      .select("id,name,seat,money,room_id,is_dealer")
+      .select("id,name,seat,money,room_id,is_dealer,is_admin")
       .eq("room_id", roomId)
       .order("seat", { ascending: true });
     if (error) {
@@ -61,6 +63,7 @@ export default function AdminScreen({ roomId, adminId }: Props) {
       if (mounted) setLoading(false);
     })();
 
+    // Listen for any player changes (refresh list)
     const ch = supabase
       .channel(`room:${roomId}:admin`)
       .on(
@@ -73,11 +76,36 @@ export default function AdminScreen({ roomId, adminId }: Props) {
       )
       .subscribe();
 
+    // Also listen to THIS admin's own row; if they lose admin or get deleted, kick out of admin panel
+    const chSelf = supabase
+      .channel(`room:${roomId}:admin-self:${adminId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "players",
+          filter: `id=eq.${adminId}`,
+        },
+        (payload: any) => {
+          if (payload.eventType === "DELETE") {
+            navigate(`/player/${roomId}/${adminId}`, { replace: true });
+            return;
+          }
+          const isAdminNow = payload.new?.is_admin;
+          if (isAdminNow === false) {
+            navigate(`/player/${roomId}/${adminId}`, { replace: true });
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
       mounted = false;
       supabase.removeChannel(ch);
+      supabase.removeChannel(chSelf);
     };
-  }, [roomId, adminId]);
+  }, [roomId, adminId, navigate]);
 
   const handleMoneyChange = (id: string, value: string) => {
     const n = Math.max(0, Math.floor(Number(value)));
@@ -100,21 +128,7 @@ export default function AdminScreen({ roomId, adminId }: Props) {
     });
   }
 
-  async function saveAll(e: FormEvent) {
-    e.preventDefault();
-    const ids = Object.keys(edits);
-    for (const id of ids) {
-      await supabase
-        .from("players")
-        .update({ money: edits[id] })
-        .eq("id", id)
-        .eq("room_id", roomId);
-    }
-    setEdits({});
-  }
-
   async function makeDealer(id: string) {
-    // Clear current dealer in this room, then set new one
     await supabase
       .from("players")
       .update({ is_dealer: false })
@@ -125,19 +139,49 @@ export default function AdminScreen({ roomId, adminId }: Props) {
       .eq("id", id)
       .eq("room_id", roomId);
 
-    // Broadcast optional hint (not required; TableScreen recomputes on changes)
-    const ch = supabase.channel(`room:${roomId}:bc`, {
+    const bc = supabase.channel(`room:${roomId}:bc`, {
       config: { broadcast: { self: true } },
     });
-    await ch.subscribe();
-    await ch.send({ type: "broadcast", event: "dealer_set", payload: { id } });
-    supabase.removeChannel(ch);
+    await bc.subscribe();
+    await bc.send({ type: "broadcast", event: "dealer_set", payload: { id } });
+    supabase.removeChannel(bc);
 
-    // Refresh list
     loadPlayers();
   }
 
-  const hasEdits = useMemo(() => Object.keys(edits).length > 0, [edits]);
+  async function makeSoleAdmin(id: string) {
+    // Demote everyone, then promote the selected player to be the single admin
+    await supabase
+      .from("players")
+      .update({ is_admin: false })
+      .eq("room_id", roomId);
+    const { error } = await supabase
+      .from("players")
+      .update({ is_admin: true })
+      .eq("id", id)
+      .eq("room_id", roomId);
+
+    // Handle rare race: re-apply demotion + promotion
+    if (error && (error as any).code === "23505") {
+      await supabase
+        .from("players")
+        .update({ is_admin: false })
+        .eq("room_id", roomId);
+      await supabase
+        .from("players")
+        .update({ is_admin: true })
+        .eq("id", id)
+        .eq("room_id", roomId);
+    }
+
+    // If the current viewer just gave admin to someone else, immediately leave Admin panel
+    if (id !== adminId) {
+      navigate(`/player/${roomId}/${adminId}`, { replace: true });
+      return;
+    }
+
+    loadPlayers();
+  }
 
   if (loading) return <p>Loading admin tools…</p>;
   if (error)
@@ -157,7 +201,7 @@ export default function AdminScreen({ roomId, adminId }: Props) {
         Room: {roomId}
       </p>
 
-      <form onSubmit={saveAll} style={{ display: "grid", gap: "0.5rem" }}>
+      <div style={{ display: "grid", gap: "0.5rem" }}>
         {players.map((p) => {
           const current = edits[p.id] ?? p.money;
           const dirty = edits[p.id] !== undefined && edits[p.id] !== p.money;
@@ -166,36 +210,36 @@ export default function AdminScreen({ roomId, adminId }: Props) {
               key={p.id}
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 80px 140px 100px 120px",
+                gridTemplateColumns: "1fr 80px 140px 100px 120px 120px",
                 gap: "0.5rem",
                 alignItems: "center",
               }}
             >
-              <div>
-                <div style={{ fontWeight: 700 }}>
-                  {p.name}{" "}
-                  {p.is_dealer && (
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        padding: "2px 8px",
-                        borderRadius: 999,
-                        background: "#9ca3af",
-                        color: "#111827",
-                        fontWeight: 800,
-                      }}
-                    >
-                      DEALER
-                    </span>
-                  )}
+              {/* Name area with badges stacked vertically to the right */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr auto",
+                  alignItems: "start",
+                  columnGap: 8,
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700 }}>{p.name}</div>
+                  <div style={{ color: "#9aa4b2", fontSize: 12 }}>
+                    Seat {p.seat + 1}
+                  </div>
                 </div>
-                <div style={{ color: "#9aa4b2", fontSize: 12 }}>
-                  Seat {p.seat + 1}
+                <div style={{ display: "grid", gap: 6 }}>
+                  {p.is_admin && <span className="badge admin">ADMIN</span>}
+                  {p.is_dealer && <span className="badge dealer">DEALER</span>}
                 </div>
               </div>
+
               <div style={{ color: "#9aa4b2", textAlign: "right" }}>
                 Current: {p.money}
               </div>
+
               <input
                 type="number"
                 min={0}
@@ -209,6 +253,7 @@ export default function AdminScreen({ roomId, adminId }: Props) {
                   color: "white",
                 }}
               />
+
               <button
                 type="button"
                 onClick={() => saveOne(p.id)}
@@ -223,6 +268,7 @@ export default function AdminScreen({ roomId, adminId }: Props) {
               >
                 {savingId === p.id ? "Saving…" : "Save"}
               </button>
+
               <button
                 type="button"
                 onClick={() => makeDealer(p.id)}
@@ -237,24 +283,26 @@ export default function AdminScreen({ roomId, adminId }: Props) {
               >
                 {p.is_dealer ? "Dealer" : "Make Dealer"}
               </button>
+
+              <button
+                type="button"
+                onClick={() => makeSoleAdmin(p.id)}
+                style={{
+                  padding: "0.45rem 0.6rem",
+                  borderRadius: 6,
+                  background: p.is_admin ? "#fbbf24" : "#0ea5e9",
+                  color: "#111827",
+                  fontWeight: 800,
+                }}
+                title="Make this player the sole admin"
+              >
+                {p.is_admin ? "Admin" : "Make Admin"}
+              </button>
             </div>
           );
         })}
 
         <div style={{ display: "flex", gap: "0.5rem", marginTop: 8 }}>
-          <button
-            type="submit"
-            disabled={!hasEdits}
-            style={{
-              padding: "0.55rem 0.8rem",
-              borderRadius: 8,
-              background: hasEdits ? "#22c55e" : "#374151",
-              color: hasEdits ? "#08110a" : "#9aa4b2",
-              fontWeight: 800,
-            }}
-          >
-            Save All
-          </button>
           <button
             type="button"
             onClick={() => navigate(`/player/${roomId}/${adminId}`)}
@@ -269,7 +317,7 @@ export default function AdminScreen({ roomId, adminId }: Props) {
             Back
           </button>
         </div>
-      </form>
+      </div>
     </div>
   );
 }

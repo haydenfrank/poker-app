@@ -1,6 +1,6 @@
-// File: src/screens/PlayerScreen.tsx (show Admin Panel button for admins)
+// File: src/screens/PlayerScreen.tsx
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabase";
 import { clearPlayerId } from "../storage";
 
@@ -8,6 +8,7 @@ interface Props {
   roomId: string;
   playerId: string;
 }
+
 type Row = {
   id: string;
   name: string;
@@ -15,6 +16,7 @@ type Row = {
   money: number;
   room_id: string;
   is_admin: boolean;
+  is_dealer: boolean;
 };
 
 export default function PlayerScreen({ roomId, playerId }: Props) {
@@ -23,39 +25,70 @@ export default function PlayerScreen({ roomId, playerId }: Props) {
   const [loading, setLoading] = useState(true);
   const [leaving, setLeaving] = useState(false);
 
+  async function load() {
+    setLoading(true);
+    const { data } = await supabase
+      .from("players")
+      .select("id,name,seat,money,room_id,is_admin,is_dealer")
+      .eq("id", playerId)
+      .eq("room_id", roomId)
+      .maybeSingle();
+
+    if (!data) {
+      clearPlayerId(roomId);
+      navigate("/", { replace: true });
+      return;
+    }
+    setPlayer(data as Row);
+    setLoading(false);
+  }
+
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      setLoading(true);
-      const { data } = await supabase
-        .from("players")
-        .select("id,name,seat,money,room_id,is_admin")
-        .eq("id", playerId)
-        .eq("room_id", roomId)
-        .single();
-      if (!cancelled) {
-        if (!data) {
-          clearPlayerId(roomId);
-          navigate("/", { replace: true });
-        } else {
-          setPlayer(data as Row);
+
+    (async () => {
+      if (!cancelled) await load();
+    })();
+
+    // Reload when THIS player's row changes (admin/dealer status or deletion)
+    const ch = supabase
+      .channel(`player:${playerId}`, { config: { broadcast: { self: false } } })
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "players",
+          filter: `id=eq.${playerId}`,
+        },
+        async (payload: any) => {
+          if (payload.eventType === "DELETE") {
+            clearPlayerId(roomId);
+            navigate("/", { replace: true });
+          } else {
+            await load();
+          }
         }
-        setLoading(false);
-      }
-    }
-    load();
+      )
+      .subscribe();
+
     return () => {
       cancelled = true;
+      supabase.removeChannel(ch);
     };
-  }, [playerId, roomId, navigate]);
+  }, [roomId, playerId, navigate]);
 
   async function leaveTable() {
+    const ok = window.confirm("Are you sure you want to leave the table?");
+    if (!ok) return;
+
     setLeaving(true);
     await supabase
       .from("players")
       .delete()
       .eq("id", playerId)
       .eq("room_id", roomId);
+
     const bc = supabase.channel(`room:${roomId}:bc`, {
       config: { broadcast: { self: true } },
     });
@@ -65,6 +98,8 @@ export default function PlayerScreen({ roomId, playerId }: Props) {
       event: "player_left",
       payload: { id: playerId },
     });
+    supabase.removeChannel(bc);
+
     clearPlayerId(roomId);
     setLeaving(false);
     navigate("/", { replace: true });
@@ -74,12 +109,11 @@ export default function PlayerScreen({ roomId, playerId }: Props) {
 
   return (
     <div style={{ maxWidth: 520, width: "100%" }}>
-      <h2>
-        Your Seat{" "}
+      <h2 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        Your Seat
         {player?.is_admin && (
           <span
             style={{
-              marginLeft: 8,
               padding: "2px 8px",
               borderRadius: 999,
               background: "#fbbf24",
@@ -90,7 +124,21 @@ export default function PlayerScreen({ roomId, playerId }: Props) {
             ADMIN
           </span>
         )}
+        {player?.is_dealer && (
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: 999,
+              background: "#9ca3af",
+              color: "#111827",
+              fontWeight: 800,
+            }}
+          >
+            DEALER
+          </span>
+        )}
       </h2>
+
       <div style={{ marginBottom: 12 }}>
         <div>Name: {player?.name}</div>
         <div>Seat: {player ? player.seat + 1 : "—"}</div>
@@ -126,10 +174,6 @@ export default function PlayerScreen({ roomId, playerId }: Props) {
       >
         {leaving ? "Leaving…" : "Leave Table"}
       </button>
-
-      <p style={{ marginTop: 16 }}>
-        <Link to={`/table/${roomId}`}>View Main Table</Link>
-      </p>
     </div>
   );
 }
