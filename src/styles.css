@@ -190,3 +190,27 @@ body {
   outline: 2px solid #fbbf24;
   outline-offset: 2px;
 }
+
+/* src/styles.css */
+.table-wrap {
+  position: relative;
+  width: min(900px, 92vw); /* restore the original */
+  aspect-ratio: 16 / 9;
+}
+
+/* src/styles.css */
+.table-card {
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 8px;
+  overflow: hidden; /* contain the table */
+}
+.table-card-header {
+  margin-bottom: 8px;
+  color: #9aa4b2;
+}
+
+/* Only inside the card, make the table fill the card width */
+.table-card .table-wrap {
+  width: 100%;
+}

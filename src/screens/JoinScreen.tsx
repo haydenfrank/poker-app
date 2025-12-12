@@ -1,4 +1,4 @@
-// File: src/screens/JoinScreen.tsx (preselect seat from ?seat=)
+// File: src/screens/JoinScreen.tsx (uses roomId from prop, same as before)
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../supabase";
@@ -12,13 +12,12 @@ export default function JoinScreen({ roomId }: Props) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialSeatParam = searchParams.get("seat");
-  const initialSeat =
-    initialSeatParam !== null
-      ? (() => {
-          const n = Number(initialSeatParam);
-          return Number.isFinite(n) && n >= 0 && n < 10 ? n : null;
-        })()
-      : null;
+  const initialSeat = initialSeatParam
+    ? (() => {
+        const n = Number(initialSeatParam);
+        return Number.isFinite(n) && n >= 0 && n < 10 ? n : null;
+      })()
+    : null;
 
   const [name, setName] = useState("");
   const [money, setMoney] = useState(1000);
@@ -33,7 +32,6 @@ export default function JoinScreen({ roomId }: Props) {
     []
   );
 
-  // Auto-resume if a saved player still exists
   useEffect(() => {
     const saved = getPlayerId(roomId);
     if (!saved) return;
@@ -44,21 +42,20 @@ export default function JoinScreen({ roomId }: Props) {
       .eq("room_id", roomId)
       .single()
       .then(({ data, error }) => {
-        if (data && !error) navigate(`/player/${saved}`, { replace: true });
+        if (data && !error)
+          navigate(`/player/${roomId}/${saved}`, { replace: true });
         else clearPlayerId(roomId);
       });
   }, [roomId, navigate]);
 
-  // Load and watch seat occupancy
   useEffect(() => {
     let cancelled = false;
     async function loadSeats() {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("players")
         .select("seat")
         .eq("room_id", roomId);
-      if (error) return;
-      const occ = new Set<number>(data!.map((r: any) => r.seat));
+      const occ = new Set<number>(data?.map((r: any) => r.seat) ?? []);
       if (!cancelled) setOccupied(occ);
     }
     loadSeats();
@@ -66,13 +63,8 @@ export default function JoinScreen({ roomId }: Props) {
       .channel(`room:${roomId}:seats`)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "players",
-          filter: `room_id=eq.${roomId}`,
-        },
-        () => loadSeats()
+        { event: "*", schema: "public", table: "players" },
+        loadSeats
       )
       .subscribe();
     return () => {
@@ -81,7 +73,6 @@ export default function JoinScreen({ roomId }: Props) {
     };
   }, [roomId]);
 
-  // If the preselected seat becomes occupied, clear selection
   useEffect(() => {
     setSelectedSeat((prev) =>
       prev != null && occupied.has(prev) ? null : prev
@@ -110,22 +101,23 @@ export default function JoinScreen({ roomId }: Props) {
       .single();
 
     if (insErr) {
-      if ((insErr as any).code === "23505")
-        setStatus("Seat already taken. Please choose another.");
-      else setStatus("Join failed.");
+      setStatus(
+        (insErr as any).code === "23505"
+          ? "Seat already taken. Please choose another."
+          : "Join failed."
+      );
       setLoading(false);
       return;
     }
 
     savePlayerId(roomId, inserted!.id);
     setLoading(false);
-    navigate(`/player/${inserted!.id}`);
+    navigate(`/player/${roomId}/${inserted!.id}`);
   }
 
   return (
     <div style={{ maxWidth: 520, width: "100%" }}>
-      <h2>Join the Table</h2>
-
+      <h2>Join the Table ({roomId})</h2>
       <div
         style={{
           display: "grid",
@@ -156,26 +148,17 @@ export default function JoinScreen({ roomId }: Props) {
                 color: isSelected ? "#08110a" : "#e5e7eb",
                 fontWeight: isSelected ? 700 : 500,
               }}
-              title={isOccupied ? "Occupied" : "Available"}
             >
               Seat {s + 1}
             </button>
           );
         })}
       </div>
-
       <form onSubmit={handleJoin} style={{ display: "grid", gap: "0.75rem" }}>
         <input
           placeholder="Your name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          style={{
-            padding: "0.6rem",
-            borderRadius: 8,
-            border: "1px solid #374151",
-            background: "#0b1220",
-            color: "white",
-          }}
         />
         <input
           type="number"
@@ -183,45 +166,19 @@ export default function JoinScreen({ roomId }: Props) {
           placeholder="Starting money"
           value={money}
           onChange={(e) => setMoney(Number(e.target.value))}
-          style={{
-            padding: "0.6rem",
-            borderRadius: 8,
-            border: "1px solid #374151",
-            background: "#0b1220",
-            color: "white",
-          }}
         />
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            color: "#e5e7eb",
-          }}
-        >
+        <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <input
             type="checkbox"
             checked={isAdmin}
             onChange={(e) => setIsAdmin(e.target.checked)}
-          />
+          />{" "}
           Join as admin
         </label>
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            padding: "0.6rem",
-            borderRadius: 8,
-            background: "#22c55e",
-            color: "#08110a",
-            fontWeight: 700,
-          }}
-        >
+        <button type="submit" disabled={loading}>
           {loading ? "Joining…" : "Join"}
         </button>
       </form>
-
-      {status && <p style={{ marginTop: 12 }}>{status}</p>}
     </div>
   );
 }

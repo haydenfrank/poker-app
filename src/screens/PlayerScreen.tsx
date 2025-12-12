@@ -1,11 +1,12 @@
-// src/screens/PlayerScreen.tsx (send broadcast after delete)
+// File: src/screens/PlayerScreen.tsx (show Admin Panel button for admins)
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../supabase";
 import { clearPlayerId } from "../storage";
 
 interface Props {
   roomId: string;
+  playerId: string;
 }
 type Row = {
   id: string;
@@ -16,8 +17,7 @@ type Row = {
   is_admin: boolean;
 };
 
-export default function PlayerScreen({ roomId }: Props) {
-  const { playerId } = useParams();
+export default function PlayerScreen({ roomId, playerId }: Props) {
   const navigate = useNavigate();
   const [player, setPlayer] = useState<Row | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,28 +36,26 @@ export default function PlayerScreen({ roomId }: Props) {
       if (!cancelled) {
         if (!data) {
           clearPlayerId(roomId);
-          navigate("/join", { replace: true });
+          navigate("/", { replace: true });
         } else {
           setPlayer(data as Row);
         }
         setLoading(false);
       }
     }
-    if (playerId) load();
+    load();
     return () => {
       cancelled = true;
     };
   }, [playerId, roomId, navigate]);
 
   async function leaveTable() {
-    if (!playerId) return;
     setLeaving(true);
     await supabase
       .from("players")
       .delete()
       .eq("id", playerId)
       .eq("room_id", roomId);
-    // Broadcast so the main table clears immediately even if DELETE payload lacks seat
     const bc = supabase.channel(`room:${roomId}:bc`, {
       config: { broadcast: { self: true } },
     });
@@ -69,7 +67,7 @@ export default function PlayerScreen({ roomId }: Props) {
     });
     clearPlayerId(roomId);
     setLeaving(false);
-    navigate("/join", { replace: true });
+    navigate("/", { replace: true });
   }
 
   if (loading) return <p>Loading your seat…</p>;
@@ -98,6 +96,23 @@ export default function PlayerScreen({ roomId }: Props) {
         <div>Seat: {player ? player.seat + 1 : "—"}</div>
         <div>Money: {player?.money}</div>
       </div>
+
+      {player?.is_admin && (
+        <button
+          onClick={() => navigate(`/admin/${roomId}/${playerId}`)}
+          style={{
+            padding: "0.6rem 0.9rem",
+            borderRadius: 8,
+            background: "#fbbf24",
+            color: "#111827",
+            fontWeight: 800,
+            marginRight: 8,
+          }}
+        >
+          Admin Panel
+        </button>
+      )}
+
       <button
         onClick={leaveTable}
         disabled={leaving}
@@ -111,8 +126,9 @@ export default function PlayerScreen({ roomId }: Props) {
       >
         {leaving ? "Leaving…" : "Leave Table"}
       </button>
+
       <p style={{ marginTop: 16 }}>
-        <Link to="/">View Main Table</Link>
+        <Link to={`/table/${roomId}`}>View Main Table</Link>
       </p>
     </div>
   );

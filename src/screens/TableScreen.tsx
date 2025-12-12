@@ -1,5 +1,6 @@
-// src/screens/TableScreen.tsx (add broadcast listener)
+// File: src/screens/TableScreen.tsx (no changes except prop roomId is now dynamic)
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabase";
 import PokerTable from "../components/PokerTable";
 import type { Player } from "../types";
@@ -12,12 +13,12 @@ type DBPlayer = {
   money: number;
   is_admin: boolean;
 };
-
 const currency = new Intl.NumberFormat(undefined, {
   style: "currency",
   currency: "USD",
   maximumFractionDigits: 0,
 });
+
 interface Props {
   roomId: string;
 }
@@ -26,6 +27,7 @@ export default function TableScreen({ roomId }: Props) {
   const [seats, setSeats] = useState<(Player | null)[]>(() =>
     Array.from({ length: 10 }, () => null)
   );
+  const navigate = useNavigate();
 
   const toPlayer = (r: DBPlayer): Player => ({
     id: r.id,
@@ -48,7 +50,6 @@ export default function TableScreen({ roomId }: Props) {
 
   useEffect(() => {
     loadAll();
-
     const changes = supabase
       .channel(`room:${roomId}:players`)
       .on(
@@ -60,18 +61,12 @@ export default function TableScreen({ roomId }: Props) {
           const oldRow = payload.old as DBPlayer | null;
           const room = newRow?.room_id ?? oldRow?.room_id;
           if (room !== roomId) return;
-
           setSeats((prev) => {
             const next = [...prev];
-            if (
-              evt === "INSERT" &&
-              newRow &&
-              newRow.seat >= 0 &&
-              newRow.seat < 10
-            )
-              next[newRow.seat] = toPlayer(newRow);
-            else if (evt === "UPDATE" && newRow) {
-              // clear old seat if moved
+            if (evt === "INSERT" && newRow) {
+              if (newRow.seat >= 0 && newRow.seat < 10)
+                next[newRow.seat] = toPlayer(newRow);
+            } else if (evt === "UPDATE" && newRow) {
               const oldSeat = prev.findIndex((p) => p?.id === newRow.id);
               if (oldSeat !== -1 && oldSeat !== newRow.seat)
                 next[oldSeat] = null;
@@ -87,7 +82,6 @@ export default function TableScreen({ roomId }: Props) {
         }
       )
       .subscribe();
-
     const bc = supabase
       .channel(`room:${roomId}:bc`, { config: { broadcast: { self: true } } })
       .on("broadcast", { event: "player_left" }, ({ payload }: any) => {
@@ -101,7 +95,6 @@ export default function TableScreen({ roomId }: Props) {
         });
       })
       .subscribe();
-
     return () => {
       supabase.removeChannel(changes);
       supabase.removeChannel(bc);
@@ -109,5 +102,12 @@ export default function TableScreen({ roomId }: Props) {
   }, [roomId]);
 
   const formatMoney = useMemo(() => (n: number) => currency.format(n), []);
-  return <PokerTable seats={seats} formatMoney={formatMoney} />;
+  const onOpenSeat = (i: number) => navigate(`/join/${roomId}?seat=${i}`);
+  return (
+    <PokerTable
+      seats={seats}
+      formatMoney={formatMoney}
+      onOpenSeat={onOpenSeat}
+    />
+  );
 }

@@ -1,22 +1,25 @@
-// src/components/Seat.tsx
+// File: src/components/Seat.tsx (call onOpenSeat for open seats)
 import type { Player } from "../types";
-import { useNavigate } from "react-router-dom";
 
 interface SeatProps {
   index: number;
   total: number;
   player: Player | null;
   formatMoney?: (n: number) => string;
+  onOpenSeat?: (index: number) => void;
 }
 
-export default function Seat({ index, total, player, formatMoney }: SeatProps) {
-  const navigate = useNavigate();
+export default function Seat({
+  index,
+  total,
+  player,
+  formatMoney,
+  onOpenSeat,
+}: SeatProps) {
   const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
   const radius = 40;
   const x = 50 + radius * Math.cos(angle);
   const y = 50 + radius * Math.sin(angle);
-
-  const goToJoin = () => navigate(`/join?seat=${index}`);
 
   return (
     <div
@@ -36,16 +39,16 @@ export default function Seat({ index, total, player, formatMoney }: SeatProps) {
           <div className="seat-stack">
             {formatMoney
               ? formatMoney(player.money)
-              : `${player.money.toLocaleString()}`}
+              : `$${player.money.toLocaleString()}`}
           </div>
         </div>
       ) : (
         <button
           className="seat-card open seat-clickable"
-          onClick={goToJoin}
+          onClick={() => onOpenSeat?.(index)}
+          type="button"
           title={`Join seat ${index + 1}`}
           aria-label={`Join seat ${index + 1}`}
-          type="button"
         >
           <div className="seat-open">Open Seat</div>
         </button>
