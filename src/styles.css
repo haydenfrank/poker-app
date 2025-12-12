@@ -214,3 +214,67 @@ body {
 .table-card .table-wrap {
   width: 100%;
 }
+
+.table-card .seat-card {
+  min-width: 90px; /* was 120px */
+  max-width: 120px; /* cap width so names don't balloon */
+  padding: 0.35rem 0.5rem; /* tighter padding */
+}
+
+.table-card .seat-name {
+  font-size: 0.8rem;
+}
+
+.table-card .seat-stack {
+  font-size: 0.75rem;
+}
+
+.table-card .admin-badge {
+  font-size: 0.65rem;
+  padding: 0 0.3rem;
+}
+
+.table-card .seat-open {
+  font-size: 0.8rem;
+}
+
+/* File: src/styles.css (dealer buck) */
+.dealer-button {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fef3c7, #fbbf24);
+  color: #111827;
+  font-weight: 800;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  user-select: none;
+}
+
+/* File: src/styles.css */
+
+/* Ensure seats render above the dealer button */
+.seat {
+  position: absolute;
+  z-index: 4;
+}
+
+/* Silver dealer button positioned between pot and seat; non-interactive so it never blocks clicks */
+.dealer-button {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #e5e7eb, #9ca3af); /* silver */
+  color: #111827;
+  font-weight: 800;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  z-index: 3; /* sits below seat cards */
+  pointer-events: none; /* never blocks seat clicks */
+}

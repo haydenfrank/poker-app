@@ -1,4 +1,4 @@
-// File: src/screens/AdminScreen.tsx (new)
+// File: src/screens/AdminScreen.tsx (add "Make Dealer" per player; removes old room-based dealer UI)
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabase";
@@ -13,6 +13,7 @@ type PlayerRow = {
   seat: number;
   money: number;
   room_id: string;
+  is_dealer: boolean;
 };
 
 export default function AdminScreen({ roomId, adminId }: Props) {
@@ -24,13 +25,13 @@ export default function AdminScreen({ roomId, adminId }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   async function ensureAdmin() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("players")
       .select("is_admin")
       .eq("id", adminId)
       .eq("room_id", roomId)
       .single();
-    if (!data || !(data as any).is_admin) {
+    if (error || !data || !(data as any).is_admin) {
       navigate(`/player/${roomId}/${adminId}`, { replace: true });
       return false;
     }
@@ -38,20 +39,17 @@ export default function AdminScreen({ roomId, adminId }: Props) {
   }
 
   async function loadPlayers() {
-    setLoading(true);
-    setError(null);
     const { data, error } = await supabase
       .from("players")
-      .select("id,name,seat,money,room_id")
+      .select("id,name,seat,money,room_id,is_dealer")
       .eq("room_id", roomId)
       .order("seat", { ascending: true });
     if (error) {
       setError("Failed to load players.");
-    } else {
-      setPlayers((data ?? []) as PlayerRow[]);
-      setEdits({});
+      return;
     }
-    setLoading(false);
+    setPlayers((data ?? []) as PlayerRow[]);
+    setEdits({});
   }
 
   useEffect(() => {
@@ -59,7 +57,8 @@ export default function AdminScreen({ roomId, adminId }: Props) {
     (async () => {
       const ok = await ensureAdmin();
       if (!ok) return;
-      if (mounted) await loadPlayers();
+      await loadPlayers();
+      if (mounted) setLoading(false);
     })();
 
     const ch = supabase
@@ -103,17 +102,39 @@ export default function AdminScreen({ roomId, adminId }: Props) {
 
   async function saveAll(e: FormEvent) {
     e.preventDefault();
-    setError(null);
     const ids = Object.keys(edits);
     for (const id of ids) {
-      const money = edits[id];
       await supabase
         .from("players")
-        .update({ money })
+        .update({ money: edits[id] })
         .eq("id", id)
         .eq("room_id", roomId);
     }
     setEdits({});
+  }
+
+  async function makeDealer(id: string) {
+    // Clear current dealer in this room, then set new one
+    await supabase
+      .from("players")
+      .update({ is_dealer: false })
+      .eq("room_id", roomId);
+    await supabase
+      .from("players")
+      .update({ is_dealer: true })
+      .eq("id", id)
+      .eq("room_id", roomId);
+
+    // Broadcast optional hint (not required; TableScreen recomputes on changes)
+    const ch = supabase.channel(`room:${roomId}:bc`, {
+      config: { broadcast: { self: true } },
+    });
+    await ch.subscribe();
+    await ch.send({ type: "broadcast", event: "dealer_set", payload: { id } });
+    supabase.removeChannel(ch);
+
+    // Refresh list
+    loadPlayers();
   }
 
   const hasEdits = useMemo(() => Object.keys(edits).length > 0, [edits]);
@@ -145,13 +166,29 @@ export default function AdminScreen({ roomId, adminId }: Props) {
               key={p.id}
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 80px 120px 100px",
+                gridTemplateColumns: "1fr 80px 140px 100px 120px",
                 gap: "0.5rem",
                 alignItems: "center",
               }}
             >
               <div>
-                <div style={{ fontWeight: 700 }}>{p.name}</div>
+                <div style={{ fontWeight: 700 }}>
+                  {p.name}{" "}
+                  {p.is_dealer && (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        padding: "2px 8px",
+                        borderRadius: 999,
+                        background: "#9ca3af",
+                        color: "#111827",
+                        fontWeight: 800,
+                      }}
+                    >
+                      DEALER
+                    </span>
+                  )}
+                </div>
                 <div style={{ color: "#9aa4b2", fontSize: 12 }}>
                   Seat {p.seat + 1}
                 </div>
@@ -185,6 +222,20 @@ export default function AdminScreen({ roomId, adminId }: Props) {
                 }}
               >
                 {savingId === p.id ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => makeDealer(p.id)}
+                style={{
+                  padding: "0.45rem 0.6rem",
+                  borderRadius: 6,
+                  background: p.is_dealer ? "#9ca3af" : "#2563eb",
+                  color: "#111827",
+                  fontWeight: 800,
+                }}
+                title="Make this player the dealer"
+              >
+                {p.is_dealer ? "Dealer" : "Make Dealer"}
               </button>
             </div>
           );
